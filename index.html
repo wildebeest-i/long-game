@@ -282,12 +282,25 @@ function defaultState(){
 }
 let S=loadState()||defaultState();
 const OLDDEF=JSON.stringify({1:"gym",2:"run",3:"gym",4:"rest",5:"gym",6:"cardio",0:"rest"});
-if(!S.sched||JSON.stringify(S.sched)===OLDDEF) S.sched={1:"A",2:"rest",3:"C",4:"run",5:"B",6:"walk",0:"walk"};
-if(!S.custom) S.custom={A:[],B:[],C:[]};
-if(!S.customDefs) S.customDefs={};
-if(!S.skips) S.skips={};
-if(S.apiKey===undefined) S.apiKey="";
-if(!S.profile) S.profile={name:"",age:"",height:"",weight:"",context:""};
+function normalise(x){
+  const D=defaultState();
+  Object.keys(D).forEach(k=>{ if(x[k]===undefined||x[k]===null) x[k]=D[k]; });
+  if(!x.sched||JSON.stringify(x.sched)===OLDDEF) x.sched={1:"A",2:"rest",3:"C",4:"run",5:"B",6:"walk",0:"walk"};
+  if(!x.custom) x.custom={A:[],B:[],C:[]};
+  ["A","B","C"].forEach(k=>{ if(!Array.isArray(x.custom[k])) x.custom[k]=[]; });
+  if(typeof x.profile!=="object"||!x.profile) x.profile={name:"",age:"",height:"",weight:"",context:""};
+  ["name","age","height","weight","context"].forEach(k=>{ if(typeof x.profile[k]!=="string") x.profile[k]=""; });
+  if(typeof x.apiKey!=="string") x.apiKey="";
+  if(typeof x.skips!=="object"||!x.skips) x.skips={};
+  if(typeof x.lifts!=="object"||!x.lifts) x.lifts={};
+  if(!Array.isArray(x.runs)) x.runs=[];
+  if(!Array.isArray(x.meas)) x.meas=[];
+  if(!Array.isArray(x.flex)) x.flex=[];
+  if(!Array.isArray(x.pullLog)) x.pullLog=[];
+  if(typeof x.days!=="object"||!x.days) x.days={};
+  return x;
+}
+normalise(S);
 
 /* ============ HELPERS ============ */
 const $=id=>document.getElementById(id);
@@ -1661,7 +1674,20 @@ function expData(){
 function impData(ev){
   const f=ev.target.files[0]; if(!f)return;
   const rd=new FileReader();
-  rd.onload=()=>{try{const d=JSON.parse(rd.result); if(d&&d.lifts){const k=S.apiKey; S=d; if(!S.apiKey&&k) S.apiKey=k; saveState();render();toast("Backup restored");}else toast("That file doesn't look right");}catch(e){toast("Couldn't read that file");}};
+  rd.onload=()=>{
+    let d;
+    try{ d=JSON.parse(rd.result); }
+    catch(e){ toast("That file isn't valid JSON"); return; }
+    if(!d||typeof d!=="object"||!d.lifts){ toast("That doesn't look like a backup"); return; }
+    try{
+      const k=S.apiKey;
+      S=normalise(d);
+      if(!S.apiKey&&k) S.apiKey=k;
+      saveState(); render();
+      const n=Object.keys(S.lifts||{}).length, dy=Object.keys(S.days||{}).length;
+      toast("Restored: "+dy+" days, "+n+" exercises");
+    }catch(e){ toast("Restore failed: "+(e.message||"unknown")); }
+  };
   rd.readAsText(f);
 }
 
