@@ -362,7 +362,13 @@ function render(){
   const ph=currentPhase(), w=programmeWeek();
   $("hdrPhase").textContent=ph.name+(w?` · Week ${w}`:"");
   const R={today:rToday,train:rTrain,book:rBook,pull:rProg,run:rTrain,prog:rProg,ex:rExPage};
-  $("main").innerHTML=R[view]();
+  try{ $("main").innerHTML=R[view](); }
+  catch(e){
+    $("main").innerHTML='<div class="card coral"><div class="eyebrow c">Something broke on this screen</div>'
+      +'<p class="small">Your data is safe and still saved. '+esc(e.message||"Unknown error")+'</p>'
+      +'<div class="row" style="margin-top:8px"><button class="btn sm" onclick="go(\'today\')">Back to Today</button>'
+      +'<button class="btn sm" onclick="expData()">Export backup</button></div></div>';
+  }
   if(view==="prog") drawCharts();
 }
 </script>
@@ -1547,7 +1553,7 @@ function dayDetail(ds){
   if(d.gym){
     const sessLifts=Object.entries(S.lifts).map(([ex,arr])=>{
       const e=arr.filter(l=>l.d===ds); if(!e.length)return null;
-      return `<p class="small" style="margin-bottom:3px"><b>${EX[ex].n}:</b> ${e.map(l=>l.sets.map(s=>`${s.w||"bw"}×${s.r}`).join(" · ")).join(" / ")}</p>`;
+      return `<p class="small" style="margin-bottom:3px"><b>${exMeta(ex).n}:</b> ${e.map(l=>l.sets.map(s=>`${s.w||"bw"}×${s.r}`).join(" · ")).join(" / ")}</p>`;
     }).filter(Boolean).join("");
     bits.push(`<div class="eyebrow a">${PROGRAM[d.gym].name}</div>${sessLifts||'<p class="small mut">Session marked done — no individual sets were saved that day.</p>'}`);
   }
