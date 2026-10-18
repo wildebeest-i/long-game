@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>The Long Game</title>
+<title>Gym Handbook</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -229,7 +229,7 @@ hr.sep{border:none;border-top:1px solid var(--line);margin:16px 0}
 <body>
 <header class="top">
   <div class="kicker" id="hdrPhase">Phase 1 · Foundation</div>
-  <h1>The Long Game</h1>
+  <h1>Gym Handbook</h1>
   <div class="sub" id="hdrSub">Muscle, heart, and a first pull-up.</div>
 </header>
 
@@ -270,6 +270,9 @@ function defaultState(){
     flex:[],                   // [{d, reach}]  sit-and-reach style: cm from toes (negative = past toes)
     activeSession:null,
     skips:{},
+    exNotes:{},
+    swaps:{},
+    minMode:false,
     apiKey:"",
     profile:{name:"",age:"",height:"",weight:"",context:""},
     custom:{A:[],B:[],C:[]},
@@ -292,6 +295,9 @@ function normalise(x){
   ["name","age","height","weight","context"].forEach(k=>{ if(typeof x.profile[k]!=="string") x.profile[k]=""; });
   if(typeof x.apiKey!=="string") x.apiKey="";
   if(typeof x.skips!=="object"||!x.skips) x.skips={};
+  if(typeof x.exNotes!=="object"||!x.exNotes) x.exNotes={};
+  if(typeof x.swaps!=="object"||!x.swaps) x.swaps={};
+  if(typeof x.minMode!=="boolean") x.minMode=false;
   if(typeof x.lifts!=="object"||!x.lifts) x.lifts={};
   if(!Array.isArray(x.runs)) x.runs=[];
   if(!Array.isArray(x.meas)) x.meas=[];
@@ -1114,9 +1120,13 @@ function rTrain(){
   const active=A&&A.d===todayStr();
   const warm=active?"":`<div class="notice"><b>Warm-up (5 min):</b> 3 min brisk on any cardio machine, then arm circles, leg swings, and 1–2 lighter feeder sets of the first exercise (don't log those). Ticking a set starts your rest automatically.</div>`;
   const customItems=(S.custom&&S.custom[sess])||[];
-  const allItems=p.items.concat(customItems.map((c,ci)=>Object.assign({},c,{_custom:ci})));
+  let allItems=p.items.concat(customItems.map((c,ci)=>Object.assign({},c,{_custom:ci})));
+  const allCount=allItems.length;
+  if(S.minMode) allItems=allItems.slice(0,3);
   const rows=allItems.map((it,idx)=>{
-    const meta=exMeta(it.ex), last=lastLift(it.ex), sug=suggest(it.ex,it);
+    const origId=it.ex, exId=effectiveEx(origId), swapped=(exId!==origId);
+    it=Object.assign({},it,{ex:exId});
+    const meta=exMeta(exId), last=lastLift(exId), sug=suggest(exId,it);
     const doneSets=(active&&A.done[it.ex])||[];
     const extra=(active&&A.extra&&A.extra[it.ex])||0;
     const nSets=it.s+extra;
@@ -1138,7 +1148,7 @@ function rTrain(){
     return `<div class="exrow">
       <div class="spread"><div>
         <span class="exname" style="cursor:pointer" onclick="go('ex','${it.ex}')">${meta.n}</span>
-        <div class="row" style="gap:8px"><span class="scheme">${scheme}</span><span class="tiny">rest ${rest}s</span>${it._custom!==undefined?`<button class="chip" onclick="removeCustom('${sess}',${it._custom})">Remove</button>`:""}</div>
+        <div class="row" style="gap:8px"><span class="scheme">${scheme}</span><span class="tiny">rest ${rest}s</span>${swapped?`<span class="tiny" style="color:var(--mut)">swapped from ${esc(exMeta(origId).n)}</span>`:""}${it._custom!==undefined?`<button class="chip" onclick="removeCustom('${sess}',${it._custom})">Remove</button>`:""}</div>
       </div></div>
       <div class="last">${lastTxt}</div>
       ${sug?`<div class="suggest">▸ ${sug.msg}</div>`:""}
@@ -1146,7 +1156,14 @@ function rTrain(){
       ${setRows}
       <div class="row" style="margin-top:8px"><button class="chip" onclick="addSet('${it.ex}')">+ Add set</button>
       <button class="chip" onclick="skipEx('${sess}','${it.ex}')">Didn't count</button>
+      <button class="chip" onclick="toggleNote('${it.ex}')">${noteFor(it.ex)?"Edit note":"+ Note"}</button>
+      ${familyOf(origId)?`<button class="chip${swapOpen===origId?" on":""}" onclick="toggleSwap('${origId}')">Swap</button>`:""}
       ${(active&&A.skip&&A.skip[it.ex]!==undefined)?'<span class="tiny" style="color:var(--coral)">marked: didn\'t count</span>':""}</div>
+      <div id="note_${it.ex}" style="display:${noteFor(it.ex)||openNote===it.ex?"block":"none"};margin-top:8px">
+        <input type="text" id="ni_${it.ex}" placeholder="How did it feel? Dropped the weight? Say why." value="${esc(noteFor(it.ex))}"
+          onchange="saveNote('${it.ex}',this.value)" onblur="saveNote('${it.ex}',this.value)">
+      </div>
+      ${swapOpen===origId?swapPanel(origId):""}
     </div>`;
   }).join("");
   const sessBar=active?`<div class="sessbar">
@@ -1156,10 +1173,64 @@ function rTrain(){
       <button class="btn primary" onclick="finishSession()">Finish</button>
     </div>`:"";
   ensureSessClock(active);
-  return pre+picker+hint+sessBar+`<div class="card"><div class="eyebrow a">${p.name}</div>${warm}${rows}
-    ${active?`<button class="btn primary" style="width:100%;padding:12px" onclick="finishSession()">Finish ${PROGRAM[A.sess].short} Day ✓</button>
+  const minBar=`<div class="card" style="margin-bottom:12px">
+    <div class="spread"><div>
+      <div class="eyebrow">${S.minMode?"Minimum session":"Full session"}</div>
+      <p class="small mut" style="margin:2px 0 0">${S.minMode?"First 3 exercises. Counts as a full green tick.":"All "+allCount+" exercises."}</p>
+    </div><button class="btn sm${S.minMode?" primary":""}" onclick="S.minMode=!S.minMode;saveState();render();toast(S.minMode?'Minimum session: 3 exercises, and it counts':'Full session')">${S.minMode?"Go full":"Rough day?"}</button></div>
+    ${S.minMode?'<p class="tiny" style="margin-top:8px">Tired, bored, nearly turned around? Do these three, lighter than usual, and leave. That is a completed session, not a compromise.</p>':""}
+  </div>`;
+  return pre+picker+hint+sessBar+minBar+`<div class="card"><div class="eyebrow a">${p.name}</div>${warm}${rows}
+    ${active?`<button class="btn primary" style="width:100%;padding:12px" onclick="finishSession()">Finish ${PROGRAM[A.sess].short} Day ✓</button>${S.minMode?'<p class="tiny" style="text-align:center;margin-top:6px">Minimum session done is a session done.</p>':""}
     <button class="btn ghost sm mut" style="width:100%;margin-top:6px" onclick="discardSession()">Discard session</button>`:
     `<p class="tiny" style="margin-top:4px">Tick your first set to start the session.</p>`}
+  </div>`;
+}
+
+/* --- swap families: equivalent movement patterns --- */
+const FAMILY={
+  // pattern key -> options [id or bank name]
+  squat:{label:"Squat / quad",ids:["gobsquat","legpress"],bank:["Hack Squat","Leg Extensions","Front Squat","Dumbbell Squat","Smith Machine Squat","Barbell Squat"]},
+  hinge:{label:"Hinge / hamstring",ids:["rdl","legcurl"],bank:["Romanian Deadlift","Lying Leg Curl","Back Extension","Glute Ham Raise","Kettlebell Swing"]},
+  unilat:{label:"Single leg",ids:["bss"],bank:["Dumbbell Lunges","Reverse Lunge","Step-ups With Dumbbells","Walking Lunge","Split Squat"]},
+  hpress:{label:"Horizontal press",ids:["dbbench","machpress","pecdeck"],bank:["Barbell Bench Press","Incline Dumbbell Press","Push-Ups","Cable Crossover","Dips - Chest Version"]},
+  vpress:{label:"Vertical press",ids:["dbohp"],bank:["Standing Military Press","Arnold Dumbbell Press","Machine Shoulder Press","Push Press"]},
+  vpull:{label:"Vertical pull",ids:["latpull","asstpull","deadhang","scappull"],bank:["Wide-Grip Lat Pulldown","Close-Grip Front Lat Pulldown","Pullups","Chin-Up"]},
+  hpull:{label:"Horizontal pull",ids:["cablerow","dbrow"],bank:["Bent Over Barbell Row","T-Bar Row","Seated Cable Rows","Machine Row","Chest Supported Row"]},
+  rear:{label:"Rear delt / upper back",ids:["facepull"],bank:["Reverse Machine Flyes","Bent Over Low-Pulley Side Lateral","Face Pull","Shrug"]},
+  sdelt:{label:"Side delt",ids:["latraise"],bank:["Side Lateral Raise","Cable Lateral Raise","Upright Row"]},
+  bi:{label:"Biceps",ids:["dbcurl","hammer","ezcurl"],bank:["Preacher Curl","Cable Curl","Incline Dumbbell Curl","Concentration Curls","Barbell Curl"]},
+  tri:{label:"Triceps",ids:["ohtri","tripush"],bank:["Triceps Pushdown","Skullcrusher","Dips - Triceps Version","Close-Grip Bench Press","Cable Rope Overhead Triceps Extension"]},
+  calf:{label:"Calves",ids:["calf"],bank:["Seated Calf Raise","Standing Calf Raises","Calf Press On The Leg Press Machine"]},
+};
+function familyOf(exId){
+  for(const k in FAMILY) if(FAMILY[k].ids.includes(exId)) return k;
+  return null;
+}
+function swapFor(exId){ return S.swaps[exId]||null; }
+function effectiveEx(exId){ const sw=swapFor(exId); return sw?sw:exId; }
+let swapOpen=null;
+function toggleSwap(exId){ swapOpen=(swapOpen===exId)?null:exId; render(); }
+function doSwap(origId,newId){
+  if(newId===origId) delete S.swaps[origId];
+  else S.swaps[origId]=newId;
+  swapOpen=null; saveState(); render();
+  toast(newId===origId?"Back to "+exMeta(origId).n:"Swapped to "+exMeta(newId).n);
+}
+function swapPanel(exId){
+  const fam=familyOf(exId); if(!fam) return "";
+  const F=FAMILY[fam];
+  const cur=effectiveEx(exId);
+  const opts=[];
+  F.ids.forEach(id=>{ if(EX[id]) opts.push({id,n:EX[id].n}); });
+  F.bank.forEach(nm=>{
+    const i=BANK.findIndex(b=>b.n.toLowerCase()===nm.toLowerCase());
+    if(i>=0 && !opts.some(o=>o.n.toLowerCase()===nm.toLowerCase())) opts.push({id:"bk_"+i,n:BANK[i].n});
+  });
+  return `<div style="margin-top:8px;padding:11px;border-radius:11px;background:var(--panel);box-shadow:var(--ins)">
+    <div class="tiny" style="margin-bottom:7px">${F.label} — pick what your gym has today</div>
+    <div class="row">${opts.map(o=>`<button class="chip${o.id===cur?" on":""}" onclick="doSwap('${exId}','${o.id}')">${esc(o.n)}</button>`).join("")}</div>
+    <p class="tiny" style="margin-top:7px">Swaps stick until you change them back. Your history stays under whatever you actually did.</p>
   </div>`;
 }
 
@@ -1208,6 +1279,26 @@ function addSet(exId){
   let A=S.activeSession;
   if(!A||A.d!==todayStr()){toast("Tick a set first to start the session");return;}
   A.extra=A.extra||{}; A.extra[exId]=(A.extra[exId]||0)+1; saveState(); render();
+}
+let openNote=null;
+function noteFor(exId){
+  const arr=S.exNotes[exId]||[];
+  const t=arr.find(n=>n.d===todayStr());
+  return t?t.note:"";
+}
+function toggleNote(exId){
+  openNote=(openNote===exId)?null:exId;
+  render();
+  setTimeout(()=>{const el=$("ni_"+exId); if(el&&el.focus) el.focus();},60);
+}
+function saveNote(exId,val){
+  const v=(val||"").trim();
+  S.exNotes[exId]=S.exNotes[exId]||[];
+  const i=S.exNotes[exId].findIndex(n=>n.d===todayStr());
+  if(!v){ if(i>=0) S.exNotes[exId].splice(i,1); }
+  else if(i>=0) S.exNotes[exId][i].note=v;
+  else S.exNotes[exId].push({d:todayStr(),note:v});
+  saveState();
 }
 function skipEx(sess,exId){
   let A=S.activeSession;
@@ -1465,6 +1556,9 @@ function dayDetail(ds){
   if(d.cardio&&!runs.length) bits.push(`<div class="eyebrow b" style="margin-top:8px">Cardio</div><p class="small">Easy session banked.</p>`);
   const habs=HABITS.filter(h=>d.habits&&d.habits[h.id]).map(h=>h.l);
   if(habs.length) bits.push(`<div class="eyebrow g" style="margin-top:8px">Habits</div><p class="small">${habs.join(" · ")}</p>`);
+  Object.entries(S.exNotes||{}).forEach(([ex,arr])=>{
+    arr.filter(n=>n.d===ds).forEach(n=>bits.push(`<p class="small" style="margin-top:4px"><b>${exMeta(ex).n}</b> note: <span class="mut">${esc(n.note)}</span></p>`));
+  });
   Object.entries(S.skips).forEach(([ex,arr])=>{
     arr.filter(k=>k.d===ds).forEach(k=>bits.push(`<p class="small" style="color:var(--coral)">${exMeta(ex).n}: attempted, didn't count${k.note?(" · "+esc(k.note)):""}</p>`));
   });
@@ -1551,6 +1645,7 @@ function rExPage(){
   <div class="card"><div class="eyebrow">History</div>
     ${hist.length?hist.slice(0,15).map(l=>`<p class="small" style="margin-bottom:4px"><span class="mut">${fmtD(l.d)}</span> · ${l.sets.map(x=>`${x.w||0}×${x.r||0}`).join(" · ")}</p>`).join(""):'<p class="small mut">No sessions logged yet.</p>'}
     ${(S.skips[id]||[]).slice(-5).reverse().map(k=>`<p class="small" style="margin-bottom:4px;color:var(--coral)"><span class="mut">${fmtD(k.d)}</span> · didn't count${k.note?(" · "+esc(k.note)):""}</p>`).join("")}
+    ${(S.exNotes[id]||[]).slice(-8).reverse().map(n=>`<p class="small" style="margin-bottom:4px"><span class="mut">${fmtD(n.d)}</span> · ${esc(n.note)}</p>`).join("")}
   </div>
   ${guide}`;
 }
@@ -1721,6 +1816,17 @@ function coachContext(){
   Object.entries(S.skips).forEach(([ex,arr])=>{
     arr.filter(k=>k.d===ds).forEach(k=>lines.push(exMeta(ex).n+": marked didn't count"+(k.note?(" — "+k.note):"")));
   });
+  Object.entries(S.exNotes||{}).forEach(([ex,arr])=>{
+    arr.filter(n=>n.d===ds).forEach(n=>lines.push(exMeta(ex).n+" note from me: "+n.note));
+  });
+  // a little history of notes on today's exercises, for pattern-spotting
+  Object.keys(S.lifts).forEach(ex=>{
+    if(!(S.lifts[ex]||[]).some(l=>l.d===ds)) return;
+    const past=(S.exNotes[ex]||[]).filter(n=>n.d<ds).slice(-2);
+    past.forEach(n=>lines.push(exMeta(ex).n+" earlier note ("+n.d+"): "+n.note));
+  });
+  if(S.minMode) lines.push("Note: training in minimum-session mode (3 exercises) on purpose, to protect consistency.");
+  Object.entries(S.swaps).forEach(([o,n])=>lines.push("Swapped "+exMeta(o).n+" for "+exMeta(n).n+" in the programme."));
   const t=weekTallies();
   lines.push("This week so far: "+t.gym.length+"/3 gym, "+t.cardio+"/2 cardio, stretched "+t.mob+"/7 days.");
   lines.push("Pull-up ladder: rung "+(S.pullStage+1)+" of 6 ("+PULLSTAGES[S.pullStage].t+").");
@@ -1746,7 +1852,7 @@ async function coachReview(){
       body:JSON.stringify({
         model:"claude-sonnet-4-6",
         max_tokens:600,
-        system:"You are a personal trainer reviewing today's training for "+profileLine()+". They train alone and use double progression (hit top of rep range on all sets, then +2.5kg). Rules: be concise (under 180 words), specific to the numbers given, honest but encouraging without being sycophantic. If reps fell below the target range, suggest holding or lowering weight per double progression. If an exercise was marked as not counting, give one concrete form or setup fix. Flag genuine PRs. End with exactly one priority for the next session. NEVER give calorie, macro, or weight-loss diet advice — habit-based nutrition only. British tone, no bullet-point spam, plain prose.",
+        system:"You are a personal trainer reviewing today's training for "+profileLine()+". They train alone and use double progression (hit top of rep range on all sets, then +2.5kg). Rules: be concise (under 180 words), specific to the numbers given, honest but encouraging without being sycophantic. If reps fell below the target range, suggest holding or lowering weight per double progression. If an exercise was marked as not counting, give one concrete form or setup fix. Tom's own notes on how exercises felt are the most important input: respond to them directly, and if a note recurs across sessions or mentions joint pain rather than muscle fatigue, address that as a priority. Flag genuine PRs. End with exactly one priority for the next session. If they are struggling with consistency, missed sessions, or left the gym early, prioritise getting them back in the door over optimal programming: praise showing up at all, and never shame a short or light session. NEVER give calorie, macro, or weight-loss diet advice — habit-based nutrition only. British tone, no bullet-point spam, plain prose.",
         messages:[{role:"user",content:"Review today's training:\n\n"+coachContext()}]
       })
     });
